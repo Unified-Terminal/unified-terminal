@@ -1,7 +1,7 @@
 import threading
 from collections.abc import Callable
 
-from winpty import PtyProcess
+from winpty import Backend, PtyProcess
 
 from unified_terminal.backend import TerminalBackend
 
@@ -30,6 +30,7 @@ class WindowsBackend(TerminalBackend):
         process = PtyProcess.spawn(
             command,
             dimensions=(rows, columns),
+            backend=Backend.WinPTY,
         )
 
         with self._lock:
