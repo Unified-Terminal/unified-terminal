@@ -2,5 +2,5 @@
 - [ ] add better performance
 - [ ] add support for custom theming
 - [ ] add better ansi color support
-- [ ] add tabs
+- [x] add tabs
 - [ ] add better window resize functionality
