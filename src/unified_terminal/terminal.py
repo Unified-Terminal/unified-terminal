@@ -1,7 +1,7 @@
 
 import pyte
 
-from PySide6.QtCore import QRect, Qt, Signal, QTimer
+from PySide6.QtCore import QPoint, QRect, Qt, Signal, QTimer
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QPainter
 from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
@@ -87,9 +87,15 @@ class TerminalWidget(QWidget):
         self.backend: TerminalBackend | None = None
         self.selection: tuple[tuple[int, int], tuple[int, int]] | None = None
         self.selection_anchor: tuple[int, int] | None = None
+        self._selection_pointer: QPoint | None = None
 
         self.output_received.connect(self._handle_output)
-        self.backend_exited.connect(self.close)
+
+        self.selection_scroll_timer = QTimer(self)
+        self.selection_scroll_timer.setInterval(80)
+        self.selection_scroll_timer.timeout.connect(
+            self._auto_scroll_selection
+        )
 
         self.cursor_visible = True
         self.cursor_timer = QTimer(self)
@@ -171,7 +177,8 @@ class TerminalWidget(QWidget):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            self.selection_anchor = self._cell_at(event.position().toPoint())
+            x, y = self._cell_at(event.position().toPoint())
+            self.selection_anchor = (x, len(self.vt_screen.history.top) + y)
             self.selection = None
             self.update()
             event.accept()
@@ -182,18 +189,54 @@ class TerminalWidget(QWidget):
         if self.selection_anchor is not None and (
             event.buttons() & Qt.MouseButton.LeftButton
         ):
-            self.selection = (
-                self.selection_anchor,
-                self._cell_at(event.position().toPoint()),
-            )
-            self.update()
+            self._selection_pointer = event.position().toPoint()
+            self._update_selection()
+            if self._selection_pointer.y() <= self.PADDING or (
+                self._selection_pointer.y() >= self.height() - self.PADDING
+            ):
+                if not self.selection_scroll_timer.isActive():
+                    self.selection_scroll_timer.start()
+            else:
+                self.selection_scroll_timer.stop()
             event.accept()
             return
         super().mouseMoveEvent(event)
 
+    def _update_selection(self):
+        if self.selection_anchor is None or self._selection_pointer is None:
+            return
+
+        x, y = self._cell_at(self._selection_pointer)
+        self.selection = (
+            self.selection_anchor,
+            (x, len(self.vt_screen.history.top) + y),
+        )
+        self.update()
+
+    def _auto_scroll_selection(self):
+        if self.selection_anchor is None or self._selection_pointer is None:
+            self.selection_scroll_timer.stop()
+            return
+
+        pointer_y = self._selection_pointer.y()
+        position = self.vt_screen.history.position
+        if pointer_y <= self.PADDING:
+            self.vt_screen.prev_page()
+        elif pointer_y >= self.height() - self.PADDING:
+            self.vt_screen.next_page()
+        else:
+            self.selection_scroll_timer.stop()
+            return
+
+        if self.vt_screen.history.position == position:
+            self.selection_scroll_timer.stop()
+        self._update_selection()
+
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.selection_anchor = None
+            self._selection_pointer = None
+            self.selection_scroll_timer.stop()
             event.accept()
             return
         super().mouseReleaseEvent(event)
@@ -242,12 +285,25 @@ class TerminalWidget(QWidget):
         if (start[1], start[0]) > (end[1], end[0]):
             start, end = end, start
 
+        screen_history = self.vt_screen.history
+        rows = list(screen_history.top)
+        rows.extend(
+            self.vt_screen.buffer[y]
+            for y in range(self.vt_screen.lines)
+        )
+        rows.extend(screen_history.bottom)
+
+        first_row = max(0, start[1])
+        last_row = min(len(rows) - 1, end[1])
+        if first_row > last_row:
+            return ""
+
         lines = []
-        for y in range(start[1], end[1] + 1):
+        for y in range(first_row, last_row + 1):
             first_column = start[0] if y == start[1] else 0
             last_column = end[0] if y == end[1] else self.vt_screen.columns - 1
             line = "".join(
-                self.vt_screen.buffer[y][x].data
+                rows[y][x].data
                 for x in range(first_column, last_column + 1)
             )
             if y != end[1]:
@@ -271,6 +327,7 @@ class TerminalWidget(QWidget):
     def _is_cell_selected(self, x, y):
         if self.selection is None:
             return False
+        y += len(self.vt_screen.history.top)
         start, end = self.selection
         if (start[1], start[0]) > (end[1], end[0]):
             start, end = end, start
@@ -379,6 +436,12 @@ class TerminalWidget(QWidget):
                 > (selection[1][1], selection[1][0])
             ):
                 selection = selection[1], selection[0]
+            if selection is not None:
+                history_offset = len(self.vt_screen.history.top)
+                selection = (
+                    (selection[0][0], selection[0][1] - history_offset),
+                    (selection[1][0], selection[1][1] - history_offset),
+                )
 
             paint_rect = event.rect()
             first_row = max(
