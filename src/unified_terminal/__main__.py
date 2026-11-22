@@ -1,7 +1,6 @@
 import faulthandler
 faulthandler.enable()
 
-import os
 import platform
 import sys
 from pathlib import Path
@@ -9,7 +8,7 @@ from pathlib import Path
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
-from unified_terminal.terminal import TerminalWidget
+from unified_terminal.window import MainWindow
 
 
 def probe(label):
@@ -49,23 +48,6 @@ def _icon_path() -> Path:
     )
 
 
-def _create_backend():
-    system = platform.system()
-
-    if system == "Windows":
-        from unified_terminal.windows_backend import WindowsBackend
-
-        return WindowsBackend(), ["powershell.exe", "-NoLogo"]
-
-    if system == "Linux":
-        from unified_terminal.linux_backend import LinuxBackend
-
-        shell = os.environ.get("SHELL", "/bin/bash")
-        return LinuxBackend(), [shell, "-i"]
-
-    raise RuntimeError(f"Unsupported operating system: {system}")
-
-
 def main():
     probe("start")
 
@@ -79,19 +61,11 @@ def main():
         app.setWindowIcon(QIcon(str(_icon_path())))
         probe("icon")
 
-    print("3: widget", flush=True)
-    terminal = TerminalWidget()
-    probe("TerminalWidget")
-    terminal.resize(1100, 700)
-    probe("resize")
-
-    print("4: backend", flush=True)
-    backend, command = _create_backend()
-    terminal.start_backend(backend, command)
-
-    app.aboutToQuit.connect(backend.close)
-    print("5: show", flush=True)
-    terminal.show()
+    print("3: window", flush=True)
+    window = MainWindow()
+    probe("MainWindow")
+    print("4: show", flush=True)
+    window.show()
     sys.exit(app.exec())
 
 
